@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 
 from app.config import settings
 from app.exchange.weex_client import WeexClient
-from app.strategy.signal_engine import build_signal_snapshot
+from app.strategy.ai_engine import score_signal
 from app.strategy.backtest import run_backtest
 
 app = FastAPI(title=settings.app_name)
@@ -19,14 +19,61 @@ client = WeexClient(
 )
 
 
+def build_ai_signal_snapshot(symbols: list[str], threshold: float = 0.66):
+    longs = []
+    shorts = []
+
+    for symbol in symbols:
+        try:
+            df = client.get_klines(symbol)
+            df = client.add_indicators(df)
+            if df is None or df.empty:
+                continue
+
+            last = df.iloc[-1].to_dict()
+            scored = score_signal(last)
+
+            if scored["long_score"] >= threshold and scored["long_score"] > scored["short_score"]:
+                longs.append({
+                    "symbol": symbol,
+                    "score": scored["long_score"],
+                    "entry": scored["long_plan"]["entry"],
+                    "sl": scored["long_plan"]["stop_loss"],
+                    "tp1": scored["long_plan"]["take_profit_1"],
+                    "tp2": scored["long_plan"]["take_profit_2"],
+                    "reasons": scored["long_reasons"],
+                })
+
+            if scored["short_score"] >= threshold and scored["short_score"] > scored["long_score"]:
+                shorts.append({
+                    "symbol": symbol,
+                    "score": scored["short_score"],
+                    "entry": scored["short_plan"]["entry"],
+                    "sl": scored["short_plan"]["stop_loss"],
+                    "tp1": scored["short_plan"]["take_profit_1"],
+                    "tp2": scored["short_plan"]["take_profit_2"],
+                    "reasons": scored["short_reasons"],
+                })
+
+        except Exception:
+            continue
+
+    longs.sort(key=lambda x: x["score"], reverse=True)
+    shorts.sort(key=lambda x: x["score"], reverse=True)
+
+    return longs[:15], shorts[:15]
+
+
 def table(data):
     header = """
     <tr>
         <th>Symbol</th>
-        <th>Entry Price</th>
+        <th>AI Score</th>
+        <th>Entry</th>
         <th>Stop Loss</th>
         <th>TP1</th>
         <th>TP2</th>
+        <th>Reasons</th>
     </tr>
     """
 
@@ -35,10 +82,12 @@ def table(data):
         rows += f"""
         <tr>
             <td>{d['symbol']}</td>
+            <td>{d['score']}</td>
             <td>{d['entry']}</td>
             <td>{d['sl']}</td>
             <td>{d['tp1']}</td>
             <td>{d['tp2']}</td>
+            <td>{d['reasons']}</td>
         </tr>
         """
     return header + rows
@@ -47,13 +96,15 @@ def table(data):
 @app.get("/", response_class=HTMLResponse)
 def home():
     symbols = client.get_top_symbols(70)
-    prices = client.get_live_prices(symbols)
-    longs, shorts = build_signal_snapshot(symbols, prices, 0.6)
+    longs, shorts = build_ai_signal_snapshot(symbols, settings.signal_threshold)
 
     backtest_result = {
         "balance": "-",
         "winrate": "-",
-        "trades": "-"
+        "trades": "-",
+        "wins": "-",
+        "losses": "-",
+        "max_drawdown": "-"
     }
 
     try:
@@ -95,6 +146,7 @@ def home():
             border-bottom:1px solid #333;
             text-align:left;
             font-size:14px;
+            vertical-align: top;
         }}
         h1 {{
             color:#fff;
@@ -122,7 +174,7 @@ def home():
 
     <body>
 
-    <h1>🚀 QUANT PRO v3</h1>
+    <h1>🚀 QUANT AI PRO</h1>
 
     <div class="box">
         <h2>K線圖</h2>
@@ -131,31 +183,34 @@ def home():
 
     <div class="grid">
         <div class="box">
-            <h2>回測摘要</h2>
+            <h2>AI 回測摘要</h2>
             <div class="stat">期末資金：{backtest_result["balance"]}</div>
             <div class="stat">勝率：{backtest_result["winrate"]}</div>
             <div class="stat">交易次數：{backtest_result["trades"]}</div>
-            <div class="muted">目前示範使用第一個熱門幣做快速回測。</div>
+            <div class="stat">Wins：{backtest_result["wins"]}</div>
+            <div class="stat">Losses：{backtest_result["losses"]}</div>
+            <div class="stat">最大回撤：{backtest_result["max_drawdown"]}</div>
+            <div class="muted">示範使用熱門幣歷史 K 線做快速回測。</div>
         </div>
 
         <div class="box">
             <h2>市場狀態</h2>
             <div class="stat">掃描幣數：70</div>
-            <div class="stat">Long 候選：{len(longs)}</div>
-            <div class="stat">Short 候選：{len(shorts)}</div>
-            <div class="muted">每 2 秒自動更新一次訊號。</div>
+            <div class="stat">AI Long 候選：{len(longs)}</div>
+            <div class="stat">AI Short 候選：{len(shorts)}</div>
+            <div class="muted">每 5 秒自動更新一次訊號與 AI 排名。</div>
         </div>
     </div>
 
     <div class="box">
-        <h2>LONG</h2>
+        <h2>AI LONG</h2>
         <table id="long">
             {table(longs)}
         </table>
     </div>
 
     <div class="box">
-        <h2>SHORT</h2>
+        <h2>AI SHORT</h2>
         <table id="short">
             {table(shorts)}
         </table>
@@ -200,15 +255,14 @@ async def ws(websocket: WebSocket):
     try:
         while True:
             symbols = client.get_top_symbols(70)
-            prices = client.get_live_prices(symbols)
-            longs, shorts = build_signal_snapshot(symbols, prices, 0.6)
+            longs, shorts = build_ai_signal_snapshot(symbols, settings.signal_threshold)
 
             await websocket.send_text(json.dumps({
                 "long": table(longs),
                 "short": table(shorts)
             }))
 
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
 
     except WebSocketDisconnect:
         return
