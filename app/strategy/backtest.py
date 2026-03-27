@@ -1,41 +1,4 @@
-import pandas as pd
-
-
-def run_backtest(df):
-    balance = 1000
-    win = 0
-    lose = 0
-
-    for i in range(50, len(df)):
-        price = df["close"].iloc[i]
-
-        ema20 = df["ema20"].iloc[i]
-        ema50 = df["ema50"].iloc[i]
-        rsi = df["rsi"].iloc[i]
-
-        # 多單策略
-        if price > ema20 > ema50 and rsi > 55:
-            tp = price * 1.02
-            sl = price * 0.98
-
-            future = df["close"].iloc[i+1:i+10]
-
-            if future.max() >= tp:
-                balance *= 1.02
-                win += 1
-            elif future.min() <= sl:
-                balance *= 0.98
-                lose += 1
-
-    total = win + lose
-    winrate = win / total if total > 0 else 0
-
-    return {
-        "balance": round(balance, 2),
-        "winrate": round(winrate, 3),
-        "trades": total
-    }
-    from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 import pandas as pd
@@ -61,9 +24,7 @@ def run_backtest(df: pd.DataFrame) -> dict[str, Any]:
     losses = 0
     trades = 0
 
-    # 每次用單位風險模擬
     risk_fraction = 0.01
-
     records = df.to_dict("records")
 
     for i in range(60, len(records) - 12):
@@ -113,7 +74,7 @@ def run_backtest(df: pd.DataFrame) -> dict[str, Any]:
                     trade_closed = True
                     break
 
-            if side == "short":
+            elif side == "short":
                 if high >= sl:
                     balance *= (1 - risk_fraction)
                     losses += 1
@@ -130,8 +91,7 @@ def run_backtest(df: pd.DataFrame) -> dict[str, Any]:
                     trade_closed = True
                     break
 
-        if not trade_closed:
-            # 沒打到 SL/TP，就看最後收盤方向
+        if not trade_closed and future:
             last_close = float(future[-1].get("close", entry))
             if side == "long":
                 if last_close > entry:
@@ -150,7 +110,8 @@ def run_backtest(df: pd.DataFrame) -> dict[str, Any]:
 
         if balance > peak:
             peak = balance
-        dd = (peak - balance) / peak if peak > 0 else 0
+
+        dd = (peak - balance) / peak if peak > 0 else 0.0
         if dd > max_drawdown:
             max_drawdown = dd
 
