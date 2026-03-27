@@ -13,7 +13,7 @@ class WeexClient:
     """
     安全版：
     - 真實讀帳戶 / 持倉
-    - 市場清單與訊號掃描用示意資料
+    - 市場清單與幣價用公開資料
     - 下單只預覽，不送真單
     """
 
@@ -108,6 +108,9 @@ class WeexClient:
         seed = sum(ord(c) for c in symbol)
         random.seed(seed)
         return round(random.uniform(10, 70000), 4)
+
+    def get_live_prices(self, symbols: list[str]) -> dict[str, float]:
+        return {s: self.get_last_price(s) for s in symbols}
 
     def preview_manual_order(
         self,
