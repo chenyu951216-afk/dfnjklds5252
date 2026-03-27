@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from fastapi import FastAPI, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
@@ -129,6 +130,7 @@ def page_shell(body: str, title: str) -> HTMLResponse:
                 margin-right:8px;
               }}
               a {{ color:#93c5fd; }}
+              .note {{ color:#facc15; }}
             </style>
           </head>
           <body>{body}</body>
@@ -246,7 +248,7 @@ def home() -> HTMLResponse:
 
     <script>
       const protocol = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${{protocol}}://${{location.host}}/ws/live`);
+      const ws = new WebSocket(`${protocol}://${location.host}/ws/live`);
       ws.onmessage = (event) => {{
         const data = JSON.parse(event.data);
         document.getElementById("eq").textContent = data.account.total_equity;
@@ -311,7 +313,6 @@ async def ws_live(websocket: WebSocket):
                 "signals_html": render_signals_table(signals),
             }
             await websocket.send_text(json.dumps(payload))
-            import asyncio
             await asyncio.sleep(2)
     except WebSocketDisconnect:
         return
