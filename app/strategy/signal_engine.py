@@ -1,7 +1,6 @@
-from __future__ import annotations
-from typing import Any
-import random
+from app.exchange.weex_client import WeexClient
 
+client = WeexClient("", "", "")
 
 def build_signal_snapshot(symbols, prices, threshold):
 
@@ -9,52 +8,38 @@ def build_signal_snapshot(symbols, prices, threshold):
     shorts = []
 
     for symbol in symbols:
-        seed = sum(ord(c) for c in symbol)
-        random.seed(seed)
 
-        trend = random.uniform(-1, 1)
-        momentum = random.uniform(-1, 1)
-        volume = random.uniform(-1, 1)
+        df = client.get_klines(symbol)
+        df = client.add_indicators(df)
 
-        score = (trend * 0.5 + momentum * 0.3 + volume * 0.2 + 1) / 2
+        last = df.iloc[-1]
 
-        price = prices.get(symbol, 0)
+        price = last["close"]
+        ema20 = last["ema20"]
+        ema50 = last["ema50"]
+        rsi = last["rsi"]
+        macd = last["macd"]
 
-        if price == 0:
-            continue
-
-        entry_low = round(price * 0.998, 4)
-        entry_high = round(price * 1.002, 4)
-
-        if trend > 0:
-            sl = round(price * 0.985, 4)
-            tp1 = round(price * 1.015, 4)
-            tp2 = round(price * 1.03, 4)
+        # 🔵 做多條件
+        if price > ema20 > ema50 and rsi > 55 and macd > 0:
 
             longs.append({
                 "symbol": symbol,
-                "score": round(score, 3),
-                "entry": f"{entry_low} - {entry_high}",
-                "sl": sl,
-                "tp1": tp1,
-                "tp2": tp2
+                "entry": round(price, 4),
+                "sl": round(price * 0.98, 4),
+                "tp1": round(price * 1.02, 4),
+                "tp2": round(price * 1.04, 4),
             })
 
-        else:
-            sl = round(price * 1.015, 4)
-            tp1 = round(price * 0.985, 4)
-            tp2 = round(price * 0.97, 4)
+        # 🔴 做空條件
+        if price < ema20 < ema50 and rsi < 45 and macd < 0:
 
             shorts.append({
                 "symbol": symbol,
-                "score": round(score, 3),
-                "entry": f"{entry_low} - {entry_high}",
-                "sl": sl,
-                "tp1": tp1,
-                "tp2": tp2
+                "entry": round(price, 4),
+                "sl": round(price * 1.02, 4),
+                "tp1": round(price * 0.98, 4),
+                "tp2": round(price * 0.96, 4),
             })
 
-    longs.sort(key=lambda x: x["score"], reverse=True)
-    shorts.sort(key=lambda x: x["score"], reverse=True)
-
-    return longs[:15], shorts[:15]
+    return longs[:10], shorts[:10]
