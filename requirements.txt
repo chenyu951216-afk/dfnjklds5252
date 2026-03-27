@@ -1,7 +1,7 @@
-fastapi
-uvicorn[standard]
-python-dotenv
-httpx
-pandas
-numpy
-python-multipart
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+python-dotenv==1.1.1
+httpx==0.28.1
+pandas==2.3.2
+numpy==2.2.6
+python-multipart==0.0.9
