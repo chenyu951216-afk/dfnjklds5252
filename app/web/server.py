@@ -9,6 +9,13 @@ from app.config import settings
 from app.exchange.weex_client import WeexClient
 from app.strategy.ai_engine import score_signal
 from app.strategy.backtest import run_backtest
+from app.strategy.optimizer import get_weights, optimize_weights_from_results, weighted_score
+from app.strategy.ranker import build_winrate_ranking, filter_high_probability_signals
+from app.strategy.storage import (
+    append_jsonl,
+    load_backtest_results,
+    save_backtest_results,
+)
 
 app = FastAPI(title=settings.app_name)
 
@@ -22,6 +29,7 @@ client = WeexClient(
 def build_ai_signal_snapshot(symbols: list[str], threshold: float = 0.66):
     longs = []
     shorts = []
+    weights = get_weights()
 
     for symbol in symbols:
         try:
@@ -33,10 +41,13 @@ def build_ai_signal_snapshot(symbols: list[str], threshold: float = 0.66):
             last = df.iloc[-1].to_dict()
             scored = score_signal(last)
 
-            if scored["long_score"] >= threshold and scored["long_score"] > scored["short_score"]:
+            long_score = weighted_score(scored["features"], "long", weights)
+            short_score = weighted_score(scored["features"], "short", weights)
+
+            if long_score >= threshold and long_score > short_score:
                 longs.append({
                     "symbol": symbol,
-                    "score": scored["long_score"],
+                    "score": round(long_score, 4),
                     "entry": scored["long_plan"]["entry"],
                     "sl": scored["long_plan"]["stop_loss"],
                     "tp1": scored["long_plan"]["take_profit_1"],
@@ -44,10 +55,10 @@ def build_ai_signal_snapshot(symbols: list[str], threshold: float = 0.66):
                     "reasons": scored["long_reasons"],
                 })
 
-            if scored["short_score"] >= threshold and scored["short_score"] > scored["long_score"]:
+            if short_score >= threshold and short_score > long_score:
                 shorts.append({
                     "symbol": symbol,
-                    "score": scored["short_score"],
+                    "score": round(short_score, 4),
                     "entry": scored["short_plan"]["entry"],
                     "sl": scored["short_plan"]["stop_loss"],
                     "tp1": scored["short_plan"]["take_profit_1"],
@@ -61,7 +72,7 @@ def build_ai_signal_snapshot(symbols: list[str], threshold: float = 0.66):
     longs.sort(key=lambda x: x["score"], reverse=True)
     shorts.sort(key=lambda x: x["score"], reverse=True)
 
-    return longs[:15], shorts[:15]
+    return longs[:20], shorts[:20], weights
 
 
 def table(data):
@@ -93,10 +104,33 @@ def table(data):
     return header + rows
 
 
+def ranking_table(rows):
+    header = """
+    <tr>
+        <th>Symbol</th>
+        <th>Trades</th>
+        <th>Avg Winrate</th>
+        <th>Avg Balance</th>
+    </tr>
+    """
+    html = ""
+    for r in rows:
+        html += f"""
+        <tr>
+            <td>{r['symbol']}</td>
+            <td>{r['trades']}</td>
+            <td>{r['avg_winrate']}</td>
+            <td>{r['avg_balance']}</td>
+        </tr>
+        """
+    return header + html
+
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     symbols = client.get_top_symbols(70)
-    longs, shorts = build_ai_signal_snapshot(symbols, settings.signal_threshold)
+    longs, shorts, weights = build_ai_signal_snapshot(symbols, settings.signal_threshold)
+    longs, shorts = filter_high_probability_signals(longs, shorts, max(settings.signal_threshold, 0.72))
 
     backtest_result = {
         "balance": "-",
@@ -108,12 +142,39 @@ def home():
     }
 
     try:
+        results = load_backtest_results()
+
         if symbols:
-            df = client.get_klines(symbols[0])
-            df = client.add_indicators(df)
-            backtest_result = run_backtest(df)
+            fresh_results = []
+            for symbol in symbols[:10]:
+                try:
+                    df = client.get_klines(symbol)
+                    df = client.add_indicators(df)
+                    result = run_backtest(df)
+                    result["symbol"] = symbol
+                    fresh_results.append(result)
+                except Exception:
+                    continue
+
+            if fresh_results:
+                save_backtest_results(fresh_results)
+                optimize_weights_from_results(fresh_results)
+                results = fresh_results
+
+            if results:
+                best = sorted(results, key=lambda x: (x.get("winrate", 0), x.get("balance", 0)), reverse=True)[0]
+                backtest_result = best
+
+        ranking = build_winrate_ranking(results)
+
     except Exception:
-        pass
+        ranking = []
+
+    append_jsonl("/data/trade_log.jsonl", {
+        "type": "dashboard_snapshot",
+        "long_count": len(longs),
+        "short_count": len(shorts),
+    })
 
     html = f"""
     <html>
@@ -169,12 +230,16 @@ def home():
             color:#94a3b8;
             font-size:13px;
         }}
+        pre {{
+            white-space: pre-wrap;
+            word-break: break-word;
+        }}
         </style>
     </head>
 
     <body>
 
-    <h1>🚀 QUANT AI PRO</h1>
+    <h1>🚀 QUANT AI PRO+</h1>
 
     <div class="box">
         <h2>K線圖</h2>
@@ -184,33 +249,46 @@ def home():
     <div class="grid">
         <div class="box">
             <h2>AI 回測摘要</h2>
+            <div class="stat">最佳幣：{backtest_result.get("symbol", "-")}</div>
             <div class="stat">期末資金：{backtest_result["balance"]}</div>
             <div class="stat">勝率：{backtest_result["winrate"]}</div>
             <div class="stat">交易次數：{backtest_result["trades"]}</div>
             <div class="stat">Wins：{backtest_result["wins"]}</div>
             <div class="stat">Losses：{backtest_result["losses"]}</div>
             <div class="stat">最大回撤：{backtest_result["max_drawdown"]}</div>
-            <div class="muted">示範使用熱門幣歷史 K 線做快速回測。</div>
+        </div>
+
+        <div class="box">
+            <h2>AI 權重</h2>
+            <pre>{json.dumps(weights, ensure_ascii=False, indent=2)}</pre>
+            <div class="muted">權重會根據近期回測結果微調並存到 /data/model.json</div>
         </div>
 
         <div class="box">
             <h2>市場狀態</h2>
             <div class="stat">掃描幣數：70</div>
-            <div class="stat">AI Long 候選：{len(longs)}</div>
-            <div class="stat">AI Short 候選：{len(shorts)}</div>
-            <div class="muted">每 5 秒自動更新一次訊號與 AI 排名。</div>
+            <div class="stat">高勝率 Long：{len(longs)}</div>
+            <div class="stat">高勝率 Short：{len(shorts)}</div>
+            <div class="muted">僅顯示高於門檻的訊號。</div>
         </div>
     </div>
 
     <div class="box">
-        <h2>AI LONG</h2>
+        <h2>勝率排行榜</h2>
+        <table id="ranking">
+            {ranking_table(ranking)}
+        </table>
+    </div>
+
+    <div class="box">
+        <h2>AI LONG（高勝率）</h2>
         <table id="long">
             {table(longs)}
         </table>
     </div>
 
     <div class="box">
-        <h2>AI SHORT</h2>
+        <h2>AI SHORT（高勝率）</h2>
         <table id="short">
             {table(shorts)}
         </table>
@@ -238,6 +316,7 @@ def home():
         const data = JSON.parse(e.data);
         document.getElementById("long").innerHTML = data.long;
         document.getElementById("short").innerHTML = data.short;
+        document.getElementById("ranking").innerHTML = data.ranking;
     }};
     </script>
 
@@ -255,11 +334,15 @@ async def ws(websocket: WebSocket):
     try:
         while True:
             symbols = client.get_top_symbols(70)
-            longs, shorts = build_ai_signal_snapshot(symbols, settings.signal_threshold)
+            longs, shorts, _weights = build_ai_signal_snapshot(symbols, settings.signal_threshold)
+            longs, shorts = filter_high_probability_signals(longs, shorts, max(settings.signal_threshold, 0.72))
+
+            ranking = build_winrate_ranking(load_backtest_results())
 
             await websocket.send_text(json.dumps({
                 "long": table(longs),
-                "short": table(shorts)
+                "short": table(shorts),
+                "ranking": ranking_table(ranking),
             }))
 
             await asyncio.sleep(5)
