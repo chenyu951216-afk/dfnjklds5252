@@ -11,18 +11,14 @@ from app.strategy.ai_engine import score_signal
 from app.strategy.backtest import run_backtest
 from app.strategy.optimizer import get_weights, optimize_weights_from_results, weighted_score
 from app.strategy.ranker import build_winrate_ranking, filter_high_probability_signals
-from app.strategy.storage import (
-    append_jsonl,
-    load_backtest_results,
-    save_backtest_results,
-)
+from app.strategy.storage import append_jsonl, load_backtest_results, save_backtest_results
 
 app = FastAPI(title=settings.app_name)
 
 client = WeexClient(
     settings.weex_api_key,
     settings.weex_secret_key,
-    settings.weex_passphrase
+    settings.weex_passphrase,
 )
 
 
@@ -35,7 +31,7 @@ def build_ai_signal_snapshot(symbols: list[str], threshold: float = 0.66):
         try:
             df = client.get_klines(symbol)
             df = client.add_indicators(df)
-            if df is None or df.empty:
+            if df.empty:
                 continue
 
             last = df.iloc[-1].to_dict()
@@ -71,7 +67,6 @@ def build_ai_signal_snapshot(symbols: list[str], threshold: float = 0.66):
 
     longs.sort(key=lambda x: x["score"], reverse=True)
     shorts.sort(key=lambda x: x["score"], reverse=True)
-
     return longs[:20], shorts[:20], weights
 
 
@@ -87,7 +82,6 @@ def table(data):
         <th>Reasons</th>
     </tr>
     """
-
     rows = ""
     for d in data:
         rows += f"""
@@ -138,8 +132,9 @@ def home():
         "trades": "-",
         "wins": "-",
         "losses": "-",
-        "max_drawdown": "-"
+        "max_drawdown": "-",
     }
+    ranking = []
 
     try:
         results = load_backtest_results()
@@ -162,13 +157,16 @@ def home():
                 results = fresh_results
 
             if results:
-                best = sorted(results, key=lambda x: (x.get("winrate", 0), x.get("balance", 0)), reverse=True)[0]
+                best = sorted(
+                    results,
+                    key=lambda x: (x.get("winrate", 0), x.get("balance", 0)),
+                    reverse=True,
+                )[0]
                 backtest_result = best
 
         ranking = build_winrate_ranking(results)
-
     except Exception:
-        ranking = []
+        pass
 
     append_jsonl("/data/trade_log.jsonl", {
         "type": "dashboard_snapshot",
@@ -209,34 +207,18 @@ def home():
             font-size:14px;
             vertical-align: top;
         }}
-        h1 {{
-            color:#fff;
-            margin-bottom:20px;
-        }}
-        h2 {{
-            color:#60a5fa;
-            margin-top:0;
-        }}
+        h1 {{ color:#fff; margin-bottom:20px; }}
+        h2 {{ color:#60a5fa; margin-top:0; }}
         .grid {{
             display:grid;
             grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
             gap:16px;
         }}
-        .stat {{
-            font-size:18px;
-            margin:8px 0;
-        }}
-        .muted {{
-            color:#94a3b8;
-            font-size:13px;
-        }}
-        pre {{
-            white-space: pre-wrap;
-            word-break: break-word;
-        }}
+        .stat {{ font-size:18px; margin:8px 0; }}
+        .muted {{ color:#94a3b8; font-size:13px; }}
+        pre {{ white-space: pre-wrap; word-break: break-word; }}
         </style>
     </head>
-
     <body>
 
     <h1>🚀 QUANT AI PRO+</h1>
@@ -261,7 +243,7 @@ def home():
         <div class="box">
             <h2>AI 權重</h2>
             <pre>{json.dumps(weights, ensure_ascii=False, indent=2)}</pre>
-            <div class="muted">權重會根據近期回測結果微調並存到 /data/model.json</div>
+            <div class="muted">權重會依近期回測微調，並存到 /data/model.json</div>
         </div>
 
         <div class="box">
@@ -269,29 +251,23 @@ def home():
             <div class="stat">掃描幣數：70</div>
             <div class="stat">高勝率 Long：{len(longs)}</div>
             <div class="stat">高勝率 Short：{len(shorts)}</div>
-            <div class="muted">僅顯示高於門檻的訊號。</div>
+            <div class="muted">僅顯示高於門檻的訊號</div>
         </div>
     </div>
 
     <div class="box">
         <h2>勝率排行榜</h2>
-        <table id="ranking">
-            {ranking_table(ranking)}
-        </table>
+        <table id="ranking">{ranking_table(ranking)}</table>
     </div>
 
     <div class="box">
         <h2>AI LONG（高勝率）</h2>
-        <table id="long">
-            {table(longs)}
-        </table>
+        <table id="long">{table(longs)}</table>
     </div>
 
     <div class="box">
         <h2>AI SHORT（高勝率）</h2>
-        <table id="short">
-            {table(shorts)}
-        </table>
+        <table id="short">{table(shorts)}</table>
     </div>
 
     <script>
@@ -311,7 +287,6 @@ def home():
     }});
 
     const ws = new WebSocket((location.protocol === "https:" ? "wss" : "ws") + "://" + location.host + "/ws");
-
     ws.onmessage = (e) => {{
         const data = JSON.parse(e.data);
         document.getElementById("long").innerHTML = data.long;
@@ -323,20 +298,17 @@ def home():
     </body>
     </html>
     """
-
     return HTMLResponse(html)
 
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
     await websocket.accept()
-
     try:
         while True:
             symbols = client.get_top_symbols(70)
             longs, shorts, _weights = build_ai_signal_snapshot(symbols, settings.signal_threshold)
             longs, shorts = filter_high_probability_signals(longs, shorts, max(settings.signal_threshold, 0.72))
-
             ranking = build_winrate_ranking(load_backtest_results())
 
             await websocket.send_text(json.dumps({
@@ -346,6 +318,5 @@ async def ws(websocket: WebSocket):
             }))
 
             await asyncio.sleep(5)
-
     except WebSocketDisconnect:
         return
