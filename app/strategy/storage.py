@@ -34,10 +34,7 @@ def save_json(path: str, data: Any) -> None:
 
 def append_jsonl(path: str, data: dict[str, Any]) -> None:
     ensure_data_dir()
-    payload = {
-        "ts": datetime.utcnow().isoformat(),
-        **data,
-    }
+    payload = {"ts": datetime.utcnow().isoformat(), **data}
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
