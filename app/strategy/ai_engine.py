@@ -25,28 +25,28 @@ def build_ai_features(last_row: dict[str, Any]) -> dict[str, float]:
     ema50 = safe_float(last_row.get("ema50"))
     rsi = safe_float(last_row.get("rsi"))
     macd = safe_float(last_row.get("macd"))
+    macd_hist = safe_float(last_row.get("macd_hist"))
     volume = safe_float(last_row.get("volume"))
     vol_ma = safe_float(last_row.get("vol_ma20"), 1.0)
-    atr_pct = safe_float(last_row.get("atr_pct"))
+    atr_pct = safe_float(last_row.get("atr_pct"), 0.015)
 
-    trend_strength = 0.0
+    trend_raw = 0.0
     if price > 0:
-        trend_strength = ((price - ema20) / price) * 8 + ((ema20 - ema50) / price) * 12
+        trend_raw = ((price - ema20) / price) * 8 + ((ema20 - ema50) / price) * 12
+
+    trend_long = clamp(0.5 + trend_raw, 0.0, 1.0)
+    trend_short = clamp(0.5 - trend_raw, 0.0, 1.0)
 
     rsi_long = clamp((rsi - 50) / 20, 0.0, 1.0)
     rsi_short = clamp((50 - rsi) / 20, 0.0, 1.0)
 
-    macd_long = clamp(macd * 5 + 0.5, 0.0, 1.0)
-    macd_short = clamp((-macd) * 5 + 0.5, 0.0, 1.0)
+    macd_long = clamp(macd * 4 + macd_hist * 8 + 0.5, 0.0, 1.0)
+    macd_short = clamp((-macd) * 4 + (-macd_hist) * 8 + 0.5, 0.0, 1.0)
 
     volume_ratio = volume / max(vol_ma, 1e-9)
     volume_score = clamp((volume_ratio - 0.8) / 0.8, 0.0, 1.0)
 
-    # atr_pct 越大代表波動越大，過高會扣分
     volatility_penalty = clamp((atr_pct - 0.015) / 0.03, 0.0, 1.0)
-
-    trend_long = clamp(0.5 + trend_strength, 0.0, 1.0)
-    trend_short = clamp(0.5 - trend_strength, 0.0, 1.0)
 
     return {
         "trend_long": trend_long,
@@ -100,38 +100,38 @@ def score_signal(last_row: dict[str, Any]) -> dict[str, Any]:
         "take_profit_2": round(price * (1 - max(atr_pct * 2.5, 0.03)), 4),
     }
 
-    reasons_long = []
-    reasons_short = []
+    long_reasons = []
+    short_reasons = []
 
     if f["trend_long"] > 0.6:
-        reasons_long.append("EMA 多頭")
+        long_reasons.append("EMA 多頭")
     if f["trend_short"] > 0.6:
-        reasons_short.append("EMA 空頭")
+        short_reasons.append("EMA 空頭")
 
     if f["rsi_long"] > 0.55:
-        reasons_long.append("RSI 偏強")
+        long_reasons.append("RSI 偏強")
     if f["rsi_short"] > 0.55:
-        reasons_short.append("RSI 偏弱")
+        short_reasons.append("RSI 偏弱")
 
     if f["macd_long"] > 0.55:
-        reasons_long.append("MACD 正向")
+        long_reasons.append("MACD 正向")
     if f["macd_short"] > 0.55:
-        reasons_short.append("MACD 負向")
+        short_reasons.append("MACD 負向")
 
     if f["volume_score"] > 0.55:
-        reasons_long.append("量能支撐")
-        reasons_short.append("量能支撐")
+        long_reasons.append("量能支撐")
+        short_reasons.append("量能支撐")
 
     if f["volatility_penalty"] > 0.5:
-        reasons_long.append("波動偏大")
-        reasons_short.append("波動偏大")
+        long_reasons.append("波動偏大")
+        short_reasons.append("波動偏大")
 
     return {
         "long_score": long_score,
         "short_score": short_score,
         "long_plan": long_plan,
         "short_plan": short_plan,
-        "long_reasons": ", ".join(reasons_long) if reasons_long else "條件一般",
-        "short_reasons": ", ".join(reasons_short) if reasons_short else "條件一般",
+        "long_reasons": ", ".join(long_reasons) if long_reasons else "條件一般",
+        "short_reasons": ", ".join(short_reasons) if short_reasons else "條件一般",
         "features": f,
     }
