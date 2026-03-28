@@ -23,8 +23,8 @@ def run_backtest(df: pd.DataFrame) -> dict[str, Any]:
     wins = 0
     losses = 0
     trades = 0
-
     risk_fraction = 0.01
+
     records = df.to_dict("records")
 
     for i in range(60, len(records) - 12):
@@ -51,7 +51,7 @@ def run_backtest(df: pd.DataFrame) -> dict[str, Any]:
         tp2 = float(plan["take_profit_2"])
 
         future = records[i + 1 : i + 11]
-        trade_closed = False
+        closed = False
 
         for candle in future:
             high = float(candle.get("high", candle.get("close", entry)))
@@ -61,37 +61,36 @@ def run_backtest(df: pd.DataFrame) -> dict[str, Any]:
                 if low <= sl:
                     balance *= (1 - risk_fraction)
                     losses += 1
-                    trade_closed = True
+                    closed = True
                     break
                 if high >= tp2:
                     balance *= (1 + risk_fraction * 2.0)
                     wins += 1
-                    trade_closed = True
+                    closed = True
                     break
                 if high >= tp1:
                     balance *= (1 + risk_fraction)
                     wins += 1
-                    trade_closed = True
+                    closed = True
                     break
-
-            elif side == "short":
+            else:
                 if high >= sl:
                     balance *= (1 - risk_fraction)
                     losses += 1
-                    trade_closed = True
+                    closed = True
                     break
                 if low <= tp2:
                     balance *= (1 + risk_fraction * 2.0)
                     wins += 1
-                    trade_closed = True
+                    closed = True
                     break
                 if low <= tp1:
                     balance *= (1 + risk_fraction)
                     wins += 1
-                    trade_closed = True
+                    closed = True
                     break
 
-        if not trade_closed and future:
+        if not closed and future:
             last_close = float(future[-1].get("close", entry))
             if side == "long":
                 if last_close > entry:
@@ -110,7 +109,6 @@ def run_backtest(df: pd.DataFrame) -> dict[str, Any]:
 
         if balance > peak:
             peak = balance
-
         dd = (peak - balance) / peak if peak > 0 else 0.0
         if dd > max_drawdown:
             max_drawdown = dd
