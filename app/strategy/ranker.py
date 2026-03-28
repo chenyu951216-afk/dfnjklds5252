@@ -39,6 +39,7 @@ def filter_high_probability_signals(
     shorts: list[dict[str, Any]],
     threshold: float = 0.72,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    long_filtered = [x for x in longs if float(x.get("score", 0)) >= threshold]
-    short_filtered = [x for x in shorts if float(x.get("score", 0)) >= threshold]
-    return long_filtered, short_filtered
+    return (
+        [x for x in longs if float(x.get("score", 0)) >= threshold],
+        [x for x in shorts if float(x.get("score", 0)) >= threshold],
+    )
