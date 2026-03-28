@@ -39,13 +39,7 @@ def weighted_score(features: dict[str, float], side: str, weights: dict[str, flo
 
 
 def optimize_weights_from_results(results: list[dict[str, Any]]) -> dict[str, float]:
-    """
-    簡化版自動優化：
-    - 根據近期勝率和平均報酬，微調權重
-    - 不做重型訓練，適合 Zeabur
-    """
     weights = get_weights()
-
     if not results:
         return weights
 
